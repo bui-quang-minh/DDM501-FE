@@ -3,15 +3,15 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
 const Icons = {
   users: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
   check: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
   pause: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
   ban: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>,
   search: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
-  plus: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+  plus: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>,
+  robot: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h0m6 0h0m-6 4h6" /></svg>,
+  spark: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /></svg>,
 };
 
 type Employee = {
@@ -27,6 +27,26 @@ type Employee = {
   join_date: string | null;
 };
 
+type SearchResult = {
+  score: number;
+  employee_id: string;
+  name: string;
+  position: string | null;
+  department: string | null;
+  work_unit: string | null;
+  years_of_experience: number | null;
+  valid_certificates: string[];
+  education_fields: string[];
+  employment_type: string | null;
+  profile_text: string;
+};
+
+type SearchResponse = {
+  query: string;
+  total: number;
+  results: SearchResult[];
+};
+
 const DEPARTMENTS = ["Phòng Kỹ thuật Công nghệ", "Trung tâm KV1", "Trung tâm KV2", "Trung tâm KV3", "Trung tâm Đo lường và tối ưu toàn cầu", "Phòng Chiến lược Kinh doanh", "Trung tâm tư vấn Dân dụng và Công nghiệp", "Phòng Đầu tư", "Trung tâm Giải pháp hạ tầng viễn thông"];
 const STATUS_LABELS: Record<string, string> = { active: "Đang làm", inactive: "Nghỉ việc", "on-leave": "Nghỉ phép" };
 const STATUS_BADGE: Record<string, string> = { active: "badge badge-green", inactive: "badge badge-red", "on-leave": "badge badge-yellow" };
@@ -39,6 +59,9 @@ type FormState = { name: string; employee_code: string; department: string; posi
 const EMPTY_FORM: FormState = { name: "", employee_code: "", department: "", position: "", email: "", phone: "", status: "active" };
 
 export default function EmployeesPage() {
+  const [tab, setTab] = useState<"list" | "ai">("list");
+
+  // List state
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -49,6 +72,17 @@ export default function EmployeesPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  // AI search state
+  const [aiQuery, setAiQuery] = useState("");
+  const [aiTopK, setAiTopK] = useState(10);
+  const [aiDepartment, setAiDepartment] = useState("");
+  const [aiMinYears, setAiMinYears] = useState("");
+  const [aiEmploymentType, setAiEmploymentType] = useState("");
+  const [aiCerts, setAiCerts] = useState("");
+  const [aiSearching, setAiSearching] = useState(false);
+  const [aiResult, setAiResult] = useState<SearchResponse | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   useEffect(() => { fetchEmployees(); }, []);
 
@@ -99,10 +133,38 @@ export default function EmployeesPage() {
     fetchEmployees();
   };
 
+  const handleAiSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiQuery.trim()) return;
+    setAiSearching(true);
+    setAiError(null);
+    setAiResult(null);
+    try {
+      const body: Record<string, any> = {
+        query: aiQuery.trim(),
+        top_k: aiTopK,
+      };
+      if (aiDepartment) body.department = aiDepartment;
+      if (aiMinYears) body.min_years_experience = Number(aiMinYears);
+      if (aiEmploymentType) body.employment_type = aiEmploymentType;
+      if (aiCerts.trim()) body.must_have_certificates = aiCerts.split(",").map(s => s.trim()).filter(Boolean);
+      const data = await apiRequest<SearchResponse>("/api/search", { method: "POST", body: JSON.stringify(body) });
+      setAiResult(data);
+    } catch (err: any) {
+      setAiError(err instanceof Error ? err.message : "Tìm kiếm thất bại");
+    } finally { setAiSearching(false); }
+  };
+
   const counts = {
     active: employees.filter(e => e.status === "active").length,
     inactive: employees.filter(e => e.status === "inactive").length,
     leave: employees.filter(e => e.status === "on-leave").length,
+  };
+
+  const scoreColor = (score: number) => {
+    if (score >= 0.8) return "#059669";
+    if (score >= 0.6) return "#d97706";
+    return "#6b7280";
   };
 
   return (
@@ -123,142 +185,284 @@ export default function EmployeesPage() {
         <div className="stats-grid">
           <div className="stat-card">
             <div className="stat-icon" style={{ background: "#f1f5f9", color: "#475569" }}>{Icons.users}</div>
-            <div>
-              <div className="stat-value">{employees.length}</div>
-              <div className="stat-label">Tổng nhân viên</div>
-            </div>
+            <div><div className="stat-value">{employees.length}</div><div className="stat-label">Tổng nhân viên</div></div>
           </div>
           <div className="stat-card">
             <div className="stat-icon" style={{ background: "#ecfdf5", color: "#059669" }}>{Icons.check}</div>
-            <div>
-              <div className="stat-value">{counts.active}</div>
-              <div className="stat-label">Đang làm việc</div>
-            </div>
+            <div><div className="stat-value">{counts.active}</div><div className="stat-label">Đang làm việc</div></div>
           </div>
           <div className="stat-card">
             <div className="stat-icon" style={{ background: "#fffbeb", color: "#d97706" }}>{Icons.pause}</div>
-            <div>
-              <div className="stat-value">{counts.leave}</div>
-              <div className="stat-label">Nghỉ phép</div>
-            </div>
+            <div><div className="stat-value">{counts.leave}</div><div className="stat-label">Nghỉ phép</div></div>
           </div>
           <div className="stat-card">
             <div className="stat-icon" style={{ background: "#fef2f2", color: "#dc2626" }}>{Icons.ban}</div>
-            <div>
-              <div className="stat-value">{counts.inactive}</div>
-              <div className="stat-label">Nghỉ việc</div>
-            </div>
+            <div><div className="stat-value">{counts.inactive}</div><div className="stat-label">Nghỉ việc</div></div>
           </div>
         </div>
 
-        {/* Table */}
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">Danh sách nhân viên</span>
-            <div className="search-wrapper">
-              <span className="search-icon">{Icons.search}</span>
-              <input
-                className="search-input"
-                placeholder="Tìm kiếm..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
-            </div>
-          </div>
-          {loading ? (
-            <div style={{ padding: 48, textAlign: "center", color: "var(--color-text-muted)" }}>Đang tải...</div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Nhân viên</th>
-                    <th>Phòng ban</th>
-                    <th>Vị trí</th>
-                    <th>Liên hệ</th>
-                    <th>Ngày vào</th>
-                    <th>Trạng thái</th>
-                    <th style={{ textAlign: "right" }}>Hành động</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {currentData.map(emp => (
-                    <tr key={emp.id}>
-                      <td>
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <div className="avatar" style={{ background: getColor(emp.name) }}>
-                            {getInitials(emp.name)}
-                          </div>
-                          <div>
-                            <div className="table-name">{emp.name}</div>
-                            <div className="table-sub">{emp.employee_code}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td>{emp.department || <span style={{ color: "var(--color-text-muted)" }}>—</span>}</td>
-                      <td>{emp.position || <span style={{ color: "var(--color-text-muted)" }}>—</span>}</td>
-                      <td>
-                        <div className="table-sub" style={{ color: "var(--color-text)" }}>{emp.email || "—"}</div>
-                        <div className="table-sub">{emp.phone || ""}</div>
-                      </td>
-                      <td style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
-                        {emp.join_date ? new Date(emp.join_date).toLocaleDateString("vi-VN") : "—"}
-                      </td>
-                      <td>
-                        <span className={STATUS_BADGE[emp.status] || "badge badge-gray"}>
-                          {STATUS_LABELS[emp.status] || emp.status}
-                        </span>
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                          <button className="btn btn-ghost btn-sm" onClick={() => openEdit(emp)}>Sửa</button>
-                          <button className="btn btn-danger btn-sm" onClick={() => setDeleteId(emp.id)}>Xóa</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {filtered.length === 0 && (
-                    <tr><td colSpan={7} style={{ textAlign: "center", padding: 48, color: "var(--color-text-muted)" }}>Không tìm thấy kết quả</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {/* Pagination */}
-          {!loading && totalPages > 1 && (
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderTop: "1px solid var(--color-border)" }}>
-              <span style={{ color: "var(--color-text-muted)", fontSize: 14 }}>
-                Hiển thị {(currentPage - 1) * PAGE_SIZE + 1} - {Math.min(currentPage * PAGE_SIZE, filtered.length)} trong tổng số {filtered.length}
-              </span>
-              <div style={{ display: "flex", gap: 4 }}>
-                <button 
-                  className="btn btn-ghost btn-sm" 
-                  disabled={currentPage === 1}
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                >
-                  Trước
-                </button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                  <button 
-                    key={p} 
-                    className={`btn btn-sm ${currentPage === p ? 'btn-primary' : 'btn-ghost'}`}
-                    onClick={() => setCurrentPage(p)}
-                    style={currentPage === p ? {} : { fontWeight: 400 }}
-                  >
-                    {p}
-                  </button>
-                ))}
-                <button 
-                  className="btn btn-ghost btn-sm" 
-                  disabled={currentPage === totalPages}
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                >
-                  Sau
-                </button>
+        {/* Tab switcher */}
+        <div style={{ display: "flex", gap: 4, marginBottom: 16, borderBottom: "1px solid var(--color-border)", paddingBottom: 0 }}>
+          <button
+            onClick={() => setTab("list")}
+            style={{
+              padding: "10px 20px", border: "none", background: "none", cursor: "pointer",
+              fontSize: 14, fontWeight: tab === "list" ? 600 : 400,
+              color: tab === "list" ? "var(--color-primary)" : "var(--color-text-muted)",
+              borderBottom: tab === "list" ? "2px solid var(--color-primary)" : "2px solid transparent",
+              marginBottom: -1,
+            }}
+          >
+            Danh sách nhân viên
+          </button>
+          <button
+            onClick={() => setTab("ai")}
+            style={{
+              padding: "10px 20px", border: "none", background: "none", cursor: "pointer",
+              fontSize: 14, fontWeight: tab === "ai" ? 600 : 400,
+              color: tab === "ai" ? "var(--color-primary)" : "var(--color-text-muted)",
+              borderBottom: tab === "ai" ? "2px solid var(--color-primary)" : "2px solid transparent",
+              marginBottom: -1,
+              display: "flex", alignItems: "center", gap: 8,
+            }}
+          >
+            Search test
+            <span style={{
+              background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+              color: "#fff", fontSize: 10, fontWeight: 700,
+              padding: "2px 7px", borderRadius: 99, letterSpacing: 0.5,
+              display: "flex", alignItems: "center", gap: 3,
+            }}>
+              <span style={{ width: 10, height: 10, display: "inline-block" }}>{Icons.spark}</span>
+              AI
+            </span>
+          </button>
+        </div>
+
+        {/* Tab: List */}
+        {tab === "list" && (
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">Danh sách nhân viên</span>
+              <div className="search-wrapper">
+                <span className="search-icon">{Icons.search}</span>
+                <input className="search-input" placeholder="Tìm kiếm..." value={search} onChange={e => setSearch(e.target.value)} />
               </div>
             </div>
-          )}
-        </div>
+            {loading ? (
+              <div style={{ padding: 48, textAlign: "center", color: "var(--color-text-muted)" }}>Đang tải...</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nhân viên</th>
+                      <th>Phòng ban</th>
+                      <th>Vị trí</th>
+                      <th>Liên hệ</th>
+                      <th>Ngày vào</th>
+                      <th>Trạng thái</th>
+                      <th style={{ textAlign: "right" }}>Hành động</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {currentData.map(emp => (
+                      <tr key={emp.id}>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <div className="avatar" style={{ background: getColor(emp.name) }}>{getInitials(emp.name)}</div>
+                            <div>
+                              <div className="table-name">{emp.name}</div>
+                              <div className="table-sub">{emp.employee_code}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td>{emp.department || <span style={{ color: "var(--color-text-muted)" }}>—</span>}</td>
+                        <td>{emp.position || <span style={{ color: "var(--color-text-muted)" }}>—</span>}</td>
+                        <td>
+                          <div className="table-sub" style={{ color: "var(--color-text)" }}>{emp.email || "—"}</div>
+                          <div className="table-sub">{emp.phone || ""}</div>
+                        </td>
+                        <td style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+                          {emp.join_date ? new Date(emp.join_date).toLocaleDateString("vi-VN") : "—"}
+                        </td>
+                        <td>
+                          <span className={STATUS_BADGE[emp.status] || "badge badge-gray"}>{STATUS_LABELS[emp.status] || emp.status}</span>
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                            <button className="btn btn-ghost btn-sm" onClick={() => openEdit(emp)}>Sửa</button>
+                            <button className="btn btn-danger btn-sm" onClick={() => setDeleteId(emp.id)}>Xóa</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {filtered.length === 0 && (
+                      <tr><td colSpan={7} style={{ textAlign: "center", padding: 48, color: "var(--color-text-muted)" }}>Không tìm thấy kết quả</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {!loading && totalPages > 1 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderTop: "1px solid var(--color-border)" }}>
+                <span style={{ color: "var(--color-text-muted)", fontSize: 14 }}>
+                  Hiển thị {(currentPage - 1) * PAGE_SIZE + 1} - {Math.min(currentPage * PAGE_SIZE, filtered.length)} trong tổng số {filtered.length}
+                </span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button className="btn btn-ghost btn-sm" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Trước</button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                    <button key={p} className={`btn btn-sm ${currentPage === p ? "btn-primary" : "btn-ghost"}`} onClick={() => setCurrentPage(p)} style={currentPage === p ? {} : { fontWeight: 400 }}>{p}</button>
+                  ))}
+                  <button className="btn btn-ghost btn-sm" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Sau</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab: AI Search */}
+        {tab === "ai" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Search form */}
+            <div className="card">
+              <div className="card-header">
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ width: 20, height: 20, color: "#8b5cf6" }}>{Icons.robot}</span>
+                  <span className="card-title">Tìm kiếm ngữ nghĩa bằng AI</span>
+                </div>
+              </div>
+              <form onSubmit={handleAiSearch}>
+                <div className="modal-body">
+                  <div className="form-group" style={{ marginBottom: 16 }}>
+                    <label className="form-label">Mô tả yêu cầu *</label>
+                    <textarea
+                      className="form-input"
+                      rows={3}
+                      placeholder="VD: Cần kỹ sư xây dựng có chứng chỉ giám sát hạng II, trên 10 năm kinh nghiệm..."
+                      value={aiQuery}
+                      onChange={e => setAiQuery(e.target.value)}
+                      required
+                      style={{ resize: "vertical", fontFamily: "inherit" }}
+                    />
+                  </div>
+                  <div className="form-grid">
+                    <div className="form-group">
+                      <label className="form-label">Số kết quả</label>
+                      <input type="number" className="form-input" min={1} max={50} value={aiTopK} onChange={e => setAiTopK(Number(e.target.value))} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Kinh nghiệm tối thiểu (năm)</label>
+                      <input type="number" className="form-input" min={0} placeholder="Không giới hạn" value={aiMinYears} onChange={e => setAiMinYears(e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Phòng ban</label>
+                      <select className="form-select" value={aiDepartment} onChange={e => setAiDepartment(e.target.value)}>
+                        <option value="">Tất cả phòng ban</option>
+                        {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Loại hợp đồng</label>
+                      <input className="form-input" placeholder="VD: Chính thức, Thử việc..." value={aiEmploymentType} onChange={e => setAiEmploymentType(e.target.value)} />
+                    </div>
+                    <div className="form-group" style={{ gridColumn: "1/-1" }}>
+                      <label className="form-label">Bắt buộc có chứng chỉ (phân cách bằng dấu phẩy)</label>
+                      <input className="form-input" placeholder="VD: giám sát, an toàn lao động" value={aiCerts} onChange={e => setAiCerts(e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-footer" style={{ justifyContent: "flex-start" }}>
+                  <button type="submit" className="btn btn-primary" disabled={aiSearching}>
+                    <span style={{ width: 16, height: 16, display: "inline-block", marginRight: 6 }}>{Icons.search}</span>
+                    {aiSearching ? "Đang tìm kiếm..." : "Tìm kiếm"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Error */}
+            {aiError && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "12px 16px", color: "#b91c1c", fontSize: 14 }}>
+                Lỗi: {aiError}
+              </div>
+            )}
+
+            {/* Results */}
+            {aiResult && (
+              <div className="card">
+                <div className="card-header">
+                  <span className="card-title">Kết quả — {aiResult.total} nhân viên phù hợp</span>
+                  <span style={{ fontSize: 13, color: "var(--color-text-muted)", fontStyle: "italic" }}>"{aiResult.query}"</span>
+                </div>
+                <div style={{ padding: "0 20px 20px" }}>
+                  {aiResult.results.length === 0 ? (
+                    <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-muted)" }}>Không tìm thấy nhân viên phù hợp</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
+                      {aiResult.results.map((r, i) => (
+                        <div key={r.employee_id ?? i} style={{
+                          border: "1px solid var(--color-border)", borderRadius: 10,
+                          padding: 16, background: "var(--color-bg-card)",
+                          display: "flex", gap: 16, alignItems: "flex-start",
+                        }}>
+                          {/* Rank + score */}
+                          <div style={{ textAlign: "center", minWidth: 48, flexShrink: 0 }}>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: "var(--color-text)" }}>#{i + 1}</div>
+                            <div style={{
+                              fontSize: 11, fontWeight: 700, marginTop: 4,
+                              color: scoreColor(r.score),
+                              background: `${scoreColor(r.score)}18`,
+                              padding: "2px 6px", borderRadius: 6,
+                            }}>
+                              {(r.score * 100).toFixed(1)}%
+                            </div>
+                          </div>
+
+                          {/* Avatar */}
+                          <div className="avatar" style={{ background: getColor(r.name ?? "?"), flexShrink: 0 }}>
+                            {getInitials(r.name ?? "?")}
+                          </div>
+
+                          {/* Info */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 15, color: "var(--color-text)", marginBottom: 2 }}>{r.name}</div>
+                            <div style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 8 }}>
+                              {r.position || "—"} · {r.department || "—"}
+                              {r.work_unit && ` / ${r.work_unit}`}
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                              {r.years_of_experience != null && (
+                                <span style={{ fontSize: 12, background: "#f1f5f9", color: "#475569", padding: "2px 8px", borderRadius: 6 }}>
+                                  {r.years_of_experience} năm KN
+                                </span>
+                              )}
+                              {r.employment_type && (
+                                <span style={{ fontSize: 12, background: "#f1f5f9", color: "#475569", padding: "2px 8px", borderRadius: 6 }}>
+                                  {r.employment_type}
+                                </span>
+                              )}
+                              {r.valid_certificates?.map(cert => (
+                                <span key={cert} style={{ fontSize: 12, background: "#ecfdf5", color: "#059669", padding: "2px 8px", borderRadius: 6 }}>
+                                  {cert}
+                                </span>
+                              ))}
+                              {r.education_fields?.map(edu => (
+                                <span key={edu} style={{ fontSize: 12, background: "#eff6ff", color: "#2563eb", padding: "2px 8px", borderRadius: 6 }}>
+                                  {edu}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Add/Edit Modal */}
@@ -324,9 +528,7 @@ export default function EmployeesPage() {
       {deleteId && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setDeleteId(null)}>
           <div className="modal" style={{ maxWidth: 400 }}>
-            <div className="modal-header">
-              <span className="card-title">Xác nhận xóa</span>
-            </div>
+            <div className="modal-header"><span className="card-title">Xác nhận xóa</span></div>
             <div className="modal-body">
               <p style={{ color: "var(--color-text-muted)" }}>Bạn có chắc chắn muốn xóa nhân viên này? Hành động này không thể hoàn tác.</p>
             </div>

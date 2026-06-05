@@ -10,8 +10,10 @@
 # production
 /build
 
-# env — commit .env.example, never .env*.local
+# env — commit .env.example, never secrets
 .env*.local
+.env.dev
+.env.prod
 
 # debug
 npm-debug.log*

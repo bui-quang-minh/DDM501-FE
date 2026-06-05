@@ -16,6 +16,7 @@ const Icons = {
 export default function HomePage() {
   const [stats, setStats] = useState<Stats>({ employees: 0, certificates: 0, valid: 0, expiring: 0 });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -28,6 +29,8 @@ export default function HomePage() {
         valid: certs.filter(c => c.status === "Còn hạn").length,
         expiring: certs.filter(c => c.status === "Sắp hết hạn").length,
       });
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : "Không thể kết nối đến máy chủ");
     }).finally(() => setLoading(false));
   }, []);
 
@@ -78,6 +81,16 @@ export default function HomePage() {
             <div style={{ fontSize: 13, color: "#0f172a", fontWeight: 600, marginTop: 8 }}>Sẵn sàng</div>
           </div>
         </div>
+
+        {/* Error banner */}
+        {error && (
+          <div style={{
+            background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8,
+            padding: "12px 16px", marginBottom: 16, color: "#b91c1c", fontSize: 14
+          }}>
+            Lỗi tải dữ liệu: {error}
+          </div>
+        )}
 
         {/* Stats */}
         <div className="stats-grid">

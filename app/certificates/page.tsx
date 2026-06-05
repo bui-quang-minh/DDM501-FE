@@ -63,6 +63,7 @@ export default function CertificatesPage() {
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => { fetchData(); }, []);
 
@@ -74,6 +75,9 @@ export default function CertificatesPage() {
       ]);
       setCertificates(certs);
       setEmployees(emps);
+      setFetchError(null);
+    } catch (err: any) {
+      setFetchError(err instanceof Error ? err.message : "Không thể kết nối đến máy chủ");
     } finally { setLoading(false); }
   };
 
@@ -125,9 +129,13 @@ export default function CertificatesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    await apiRequest(`/api/certificates/${id}`, { method: "DELETE" });
-    setDeleteId(null);
-    fetchData();
+    try {
+      await apiRequest(`/api/certificates/${id}`, { method: "DELETE" });
+      setDeleteId(null);
+      fetchData();
+    } catch (err: any) {
+      alert("Xóa thất bại: " + (err instanceof Error ? err.message : "Lỗi không xác định"));
+    }
   };
 
   const counts = {
@@ -150,6 +158,15 @@ export default function CertificatesPage() {
       </div>
 
       <div className="page-content">
+        {fetchError && (
+          <div style={{
+            background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8,
+            padding: "12px 16px", marginBottom: 16, color: "#b91c1c", fontSize: 14
+          }}>
+            Lỗi tải dữ liệu: {fetchError}
+          </div>
+        )}
+
         {/* Stats */}
         <div className="stats-grid">
           <div className="stat-card">

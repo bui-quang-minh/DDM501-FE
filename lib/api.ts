@@ -5,10 +5,10 @@ export async function apiRequest<T>(
   options?: RequestInit
 ): Promise<T> {
   const isFormData = options?.body instanceof FormData;
-  const headers = isFormData ? {} : { "Content-Type": "application/json" };
+  const headers: Record<string, string> = isFormData ? {} : { "Content-Type": "application/json" };
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { ...headers, ...(options?.headers || {}) },
     ...options,
+    headers: { ...headers, ...(options?.headers as Record<string, string> || {}) },
   });
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${res.statusText}`);

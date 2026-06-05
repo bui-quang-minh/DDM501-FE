@@ -59,15 +59,15 @@ export default function Sidebar() {
               >
                 <span className="nav-icon">{item.icon}</span>
                 <span style={{ flex: 1 }}>{item.label}</span>
-                {item.badge && (
+                {(item as any).badge && (
                   <span style={{
                     fontSize: 11, fontWeight: 600, padding: "2px 8px",
                     borderRadius: 6,
-                    background: item.badgeColor ?? "#dbeafe",
-                    color: item.badgeText ?? "#1e40af",
-                    border: `1px solid ${item.badgeBorder ?? "#bfdbfe"}`,
+                    background: (item as any).badgeColor ?? "#dbeafe",
+                    color: (item as any).badgeText ?? "#1e40af",
+                    border: `1px solid ${(item as any).badgeBorder ?? "#bfdbfe"}`,
                   }}>
-                    {item.badge}
+                    {(item as any).badge}
                   </span>
                 )}
               </Link>

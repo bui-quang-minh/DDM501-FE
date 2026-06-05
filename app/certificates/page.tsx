@@ -55,6 +55,8 @@ export default function CertificatesPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 10;
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [editId, setEditId] = useState<string | null>(null);
@@ -83,6 +85,11 @@ export default function CertificatesPage() {
     const matchStatus = !statusFilter || c.status === statusFilter;
     return matchSearch && matchStatus;
   });
+
+  useEffect(() => { setCurrentPage(1); }, [search, statusFilter]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const currentData = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   const openAdd = () => { setForm(EMPTY_FORM); setEditId(null); setFile(null); setShowModal(true); };
   const openEdit = (c: Certificate) => {
@@ -202,7 +209,7 @@ export default function CertificatesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(cert => (
+                  {currentData.map(cert => (
                     <tr key={cert.id}>
                       <td>
                         <div className="table-name">{cert.employees?.name || "—"}</div>
@@ -241,6 +248,40 @@ export default function CertificatesPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+          )}
+          {/* Pagination */}
+          {!loading && totalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderTop: "1px solid var(--color-border)" }}>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 14 }}>
+                Hiển thị {(currentPage - 1) * PAGE_SIZE + 1} - {Math.min(currentPage * PAGE_SIZE, filtered.length)} trong tổng số {filtered.length}
+              </span>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button 
+                  className="btn btn-ghost btn-sm" 
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                >
+                  Trước
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                  <button 
+                    key={p} 
+                    className={`btn btn-sm ${currentPage === p ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setCurrentPage(p)}
+                    style={currentPage === p ? {} : { fontWeight: 400 }}
+                  >
+                    {p}
+                  </button>
+                ))}
+                <button 
+                  className="btn btn-ghost btn-sm" 
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                >
+                  Sau
+                </button>
+              </div>
             </div>
           )}
         </div>

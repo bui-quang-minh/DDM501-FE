@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
-  title: "DDM501 — Tender Personnel Recommender",
-  description: "AI-powered personnel recommendation from tender dossiers",
+  title: "DDM501 — AI Biện pháp luận & Quản lý Nhân sự",
+  description: "Hệ thống AI tạo Biện pháp luận từ hồ sơ mời thầu, quản lý nhân sự và chứng chỉ",
 };
 
 export default function RootLayout({
@@ -12,8 +13,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="antialiased">{children}</body>
+    <html lang="vi">
+      <body>
+        <Sidebar />
+        <div className="main-layout">
+          {children}
+        </div>
+      </body>
     </html>
   );
 }

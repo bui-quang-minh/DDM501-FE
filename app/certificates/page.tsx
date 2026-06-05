@@ -112,6 +112,8 @@ export default function CertificatesPage() {
       await apiRequest(url, { method, body: formData });
       setShowModal(false);
       fetchData();
+    } catch (err: any) {
+      alert("Đã có lỗi xảy ra: " + err.message);
     } finally { setSaving(false); }
   };
 

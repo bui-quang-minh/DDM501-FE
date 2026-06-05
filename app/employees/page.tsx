@@ -81,6 +81,8 @@ export default function EmployeesPage() {
       }
       setShowModal(false);
       fetchEmployees();
+    } catch (err: any) {
+      alert("Đã có lỗi xảy ra: " + err.message);
     } finally { setSaving(false); }
   };
 

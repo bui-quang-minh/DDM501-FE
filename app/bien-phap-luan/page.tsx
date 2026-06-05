@@ -1,31 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { validatePdfIsReadable, extractPdfText } from "@/lib/pdf-validator";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+type Requirement = {
+  query: string;
+  min_years_experience: number | null;
+  must_have_certificates: string[];
+};
 
 type Stage =
   | { step: "idle" }
   | { step: "validating" }
   | { step: "extracting" }
   | { step: "sending" }
-  | { step: "done"; markdown: string; pageCount: number; chars: number }
+  | { step: "done"; requirements: Requirement[]; pageCount: number; chars: number }
   | { step: "error"; message: string };
-
-function parseMarkdown(md: string): string {
-  return md
-    .replace(/^### (.+)$/gm, '<h3 class="md-h3">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 class="md-h2">$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1 class="md-h1">$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/^- (.+)$/gm, '<li class="md-li">$1</li>')
-    .replace(/(<li[\s\S]*?<\/li>)/g, '<ul class="md-ul">$1</ul>')
-    .replace(/\n{2,}/g, '</p><p class="md-p">')
-    .replace(/^(?!<[hul])(.+)$/gm, '<p class="md-p">$1</p>')
-    .replace(/<p class="md-p"><\/p>/g, "");
-}
 
 const Icons = {
   upload: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>,
@@ -36,14 +28,14 @@ const Icons = {
   check: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>,
   copy: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>,
   download: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>,
-  warning: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+  warning: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>,
+  users: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
 };
 
 export default function BienPhapLuanPage() {
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [stage, setStage] = useState<Stage>({ step: "idle" });
-  const [markdown, setMarkdown] = useState("");
   const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -54,22 +46,18 @@ export default function BienPhapLuanPage() {
       return;
     }
     setFile(f);
-    setMarkdown("");
     setStage({ step: "validating" });
 
     try {
-      // Step 1: Validate
       const validation = await validatePdfIsReadable(f);
       if (!validation.valid) {
         setStage({ step: "error", message: validation.reason ?? "PDF không hợp lệ." });
         return;
       }
 
-      // Step 2: Extract text
       setStage({ step: "extracting" });
       const text = await extractPdfText(f);
 
-      // Step 3: Send to AI
       setStage({ step: "sending" });
       const res = await fetch(`${BASE_URL}/api/analyze`, {
         method: "POST",
@@ -79,10 +67,11 @@ export default function BienPhapLuanPage() {
 
       if (!res.ok) throw new Error(`Lỗi API: ${res.status}`);
       const data = await res.json();
-      const result = data.markdown ?? data.result ?? data.content ?? JSON.stringify(data);
-      setMarkdown(result);
-      setStage({ step: "done", markdown: result, pageCount: validation.pageCount, chars: text.length });
 
+      const raw = data.result ?? data.markdown ?? data.content ?? data;
+      const requirements: Requirement[] = Array.isArray(raw) ? raw : [];
+
+      setStage({ step: "done", requirements, pageCount: validation.pageCount, chars: text.length });
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Có lỗi xảy ra. Vui lòng thử lại.";
@@ -92,29 +81,27 @@ export default function BienPhapLuanPage() {
 
   const reset = () => {
     setFile(null);
-    setMarkdown("");
     setStage({ step: "idle" });
     if (inputRef.current) inputRef.current.value = "";
   };
 
-  const copyToClipboard = async () => {
-    await navigator.clipboard.writeText(markdown);
+  const copyJson = async (requirements: Requirement[]) => {
+    await navigator.clipboard.writeText(JSON.stringify(requirements, null, 2));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const downloadMarkdown = () => {
-    const blob = new Blob([markdown], { type: "text/markdown" });
+  const downloadJson = (requirements: Requirement[]) => {
+    const blob = new Blob([JSON.stringify(requirements, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = (file?.name.replace(".pdf", "") ?? "ket_qua") + "_bien_phap_luan.md";
+    a.download = (file?.name.replace(".pdf", "") ?? "ket_qua") + "_yeu_cau_nhan_su.json";
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const isProcessing = ["validating", "extracting", "sending"].includes(stage.step);
-
   const stageLabel: Record<string, string> = {
     validating: "Đang kiểm tra PDF...",
     extracting: "Đang trích xuất nội dung...",
@@ -124,79 +111,46 @@ export default function BienPhapLuanPage() {
   return (
     <>
       <style>{`
-        .md-h1 { font-size: 20px; font-weight: 700; color: var(--color-text); margin: 24px 0 12px; }
-        .md-h2 { font-size: 16px; font-weight: 600; color: var(--color-primary); margin: 20px 0 8px; border-bottom: 1px solid var(--color-border); padding-bottom: 6px; }
-        .md-h3 { font-size: 14px; font-weight: 600; color: var(--color-text); margin: 16px 0 6px; }
-        .md-p { color: var(--color-text-muted); line-height: 1.6; margin: 8px 0; font-size: 14px; }
-        .md-ul { padding-left: 24px; margin: 8px 0; }
-        .md-li { color: var(--color-text-muted); line-height: 1.6; font-size: 14px; list-style-type: disc; margin: 4px 0; }
         .upload-zone {
-          border: 2px dashed #cbd5e1;
-          border-radius: 12px;
-          background: #f8fafc;
-          transition: all 0.2s ease;
-          cursor: pointer;
+          border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc;
+          transition: all 0.2s ease; cursor: pointer;
           display: flex; flex-direction: column; align-items: center; justify-content: center;
-          min-height: 240px; gap: 16px; text-align: center;
-          padding: 40px;
+          min-height: 240px; gap: 16px; text-align: center; padding: 40px;
         }
-        .upload-zone.dragging {
-          border-color: var(--color-primary);
-          background: #eff6ff;
-        }
-        .upload-zone:hover {
-          border-color: #94a3b8;
-          background: white;
-          box-shadow: var(--shadow-sm);
-        }
+        .upload-zone.dragging { border-color: var(--color-primary); background: #eff6ff; }
+        .upload-zone:hover { border-color: #94a3b8; background: white; box-shadow: var(--shadow-sm); }
         .pulse-ring {
           width: 64px; height: 64px; border-radius: 50%;
           background: #e0e7ff; color: var(--color-primary);
           display: flex; align-items: center; justify-content: center;
         }
         .pulse-ring svg { width: 32px; height: 32px; }
-        .progress-steps { display: flex; align-items: center; gap: 12px; }
-        .step-dot {
-          width: 12px; height: 12px; border-radius: 50%;
-          background: #e2e8f0;
-          transition: all 0.3s;
-        }
-        .step-dot.active { background: var(--color-primary); box-shadow: 0 0 0 4px #dbeafe; }
-        .step-dot.done { background: #10b981; }
         .spinner {
           width: 40px; height: 40px; border-radius: 50%;
-          border: 3px solid #e2e8f0;
-          border-top-color: var(--color-primary);
+          border: 3px solid #e2e8f0; border-top-color: var(--color-primary);
           animation: spin 0.8s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .result-box {
-          background: #f8fafc;
-          border: 1px solid var(--color-border);
-          border-radius: 12px;
-          padding: 32px;
-          max-height: 600px;
-          overflow-y: auto;
-          font-family: 'Inter', sans-serif;
-        }
         .chip {
           display: inline-flex; align-items: center; gap: 6px;
-          padding: 4px 12px;
-          border-radius: 999px; font-size: 12px; font-weight: 500;
-          background: white; color: var(--color-text-muted);
-          border: 1px solid var(--color-border);
+          padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 500;
+          background: white; color: var(--color-text-muted); border: 1px solid var(--color-border);
         }
         .chip svg { width: 14px; height: 14px; }
+        .req-card {
+          border: 1px solid var(--color-border); border-radius: 10px;
+          padding: 16px 20px; background: var(--color-bg-card);
+          display: flex; flex-direction: column; gap: 10px;
+        }
       `}</style>
 
-      {/* Topbar */}
       <div className="topbar">
         <div>
-          <div className="topbar-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 24, height: 24, color: 'var(--color-primary)' }}>{Icons.robot}</span> 
+          <div className="topbar-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 24, height: 24, color: "var(--color-primary)" }}>{Icons.robot}</span>
             Biện pháp luận — Phân tích Hồ sơ
           </div>
-          <div className="topbar-subtitle">Upload PDF hồ sơ mời thầu để tự động tạo Biện pháp luận</div>
+          <div className="topbar-subtitle">Upload PDF hồ sơ mời thầu để trích xuất yêu cầu nhân sự</div>
         </div>
         {(stage.step === "done" || file) && (
           <button className="btn btn-ghost" onClick={reset}>
@@ -207,54 +161,39 @@ export default function BienPhapLuanPage() {
 
       <div className="page-content" style={{ maxWidth: 900, margin: "0 auto" }}>
 
-        {/* ─── IDLE / UPLOAD STAGE ─── */}
+        {/* IDLE */}
         {!file && stage.step === "idle" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            {/* Hero banner */}
             <div style={{
-              background: "white",
-              border: "1px solid var(--color-border)",
-              boxShadow: "var(--shadow-sm)",
-              borderRadius: 16, padding: "28px 32px",
+              background: "white", border: "1px solid var(--color-border)",
+              boxShadow: "var(--shadow-sm)", borderRadius: 16, padding: "28px 32px",
               display: "flex", gap: 24, alignItems: "center"
             }}>
-              <div style={{ width: 48, height: 48, color: "var(--color-primary)", flexShrink: 0 }}>
-                {Icons.document}
-              </div>
+              <div style={{ width: 48, height: 48, color: "var(--color-primary)", flexShrink: 0 }}>{Icons.document}</div>
               <div>
                 <h2 style={{ fontSize: 18, fontWeight: 700, color: "var(--color-text)", marginBottom: 8 }}>
-                  Tạo Biện pháp luận từ Hồ sơ mời thầu
+                  Trích xuất yêu cầu nhân sự từ Hồ sơ mời thầu
                 </h2>
                 <p style={{ color: "var(--color-text-muted)", lineHeight: 1.6, fontSize: 14 }}>
-                  Upload file PDF hồ sơ mời thầu (dạng văn bản). Hệ thống sẽ tự động trích xuất nội dung,
-                  phân tích và sinh ra Biện pháp luận hoàn chỉnh dưới dạng Markdown — sẵn sàng để chỉnh sửa và xuất báo cáo.
+                  Upload file PDF hồ sơ mời thầu. Hệ thống AI sẽ tự động phân tích và trích xuất danh sách
+                  nhân sự yêu cầu kèm kinh nghiệm và chứng chỉ bắt buộc.
                 </p>
                 <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                   <span className="chip"><span style={{ width: 14, height: 14 }}>{Icons.document}</span> PDF dạng văn bản</span>
                   <span className="chip"><span style={{ width: 14, height: 14 }}>{Icons.robot}</span> Phân tích tự động</span>
-                  <span className="chip"><span style={{ width: 14, height: 14 }}>{Icons.copy}</span> Dạng Markdown</span>
+                  <span className="chip"><span style={{ width: 14, height: 14 }}>{Icons.users}</span> Danh sách nhân sự</span>
                 </div>
               </div>
             </div>
 
-            {/* Upload zone */}
             <label
               className={`upload-zone ${dragging ? "dragging" : ""}`}
               onDragOver={e => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
-              onDrop={e => {
-                e.preventDefault(); setDragging(false);
-                const f = e.dataTransfer.files[0];
-                if (f) handleFile(f);
-              }}
+              onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
             >
-              <input
-                ref={inputRef}
-                type="file"
-                accept="application/pdf"
-                style={{ display: "none" }}
-                onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
-              />
+              <input ref={inputRef} type="file" accept="application/pdf" style={{ display: "none" }}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
               <div className="pulse-ring">{Icons.upload}</div>
               <div>
                 <div style={{ fontSize: 16, fontWeight: 600, color: "var(--color-text)" }}>
@@ -266,22 +205,17 @@ export default function BienPhapLuanPage() {
               </div>
             </label>
 
-            {/* Step guide */}
-            <div style={{
-              display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: 16
-            }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
               {[
                 { icon: Icons.upload, step: "1", title: "Upload PDF", desc: "Chọn file hồ sơ mời thầu dạng text" },
                 { icon: Icons.cog, step: "2", title: "Trích xuất", desc: "Hệ thống đọc và tách nội dung PDF" },
-                { icon: Icons.robot, step: "3", title: "Phân tích", desc: "Hệ thống xử lý và sinh Biện pháp luận" },
-                { icon: Icons.document, step: "4", title: "Nhận kết quả", desc: "Xem, sao chép hoặc tải về Markdown" },
+                { icon: Icons.robot, step: "3", title: "Phân tích AI", desc: "AI xác định vị trí, kinh nghiệm, chứng chỉ" },
+                { icon: Icons.users, step: "4", title: "Nhận kết quả", desc: "Danh sách yêu cầu nhân sự sẵn sàng" },
               ].map(s => (
                 <div key={s.step} className="stat-card" style={{ flexDirection: "column", gap: 12, padding: 20, alignItems: "flex-start" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
                     <div style={{
-                      width: 24, height: 24, borderRadius: 6,
-                      background: "#f1f5f9",
+                      width: 24, height: 24, borderRadius: 6, background: "#f1f5f9",
                       display: "flex", alignItems: "center", justifyContent: "center",
                       fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)"
                     }}>{s.step}</div>
@@ -297,7 +231,7 @@ export default function BienPhapLuanPage() {
           </div>
         )}
 
-        {/* ─── ERROR STATE ─── */}
+        {/* ERROR */}
         {stage.step === "error" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
             <div style={{
@@ -316,7 +250,7 @@ export default function BienPhapLuanPage() {
           </div>
         )}
 
-        {/* ─── PROCESSING STAGE ─── */}
+        {/* PROCESSING */}
         {isProcessing && (
           <div style={{
             display: "flex", flexDirection: "column", alignItems: "center",
@@ -324,24 +258,23 @@ export default function BienPhapLuanPage() {
             background: "white", borderRadius: 16, border: "1px solid var(--color-border)", boxShadow: "var(--shadow-sm)"
           }}>
             <div className="spinner" />
-
             <div>
               <div style={{ fontSize: 18, fontWeight: 600, color: "var(--color-text)", marginBottom: 8 }}>
                 {stageLabel[stage.step]}
               </div>
-              <div style={{ color: "var(--color-text-muted)", fontSize: 14 }}>
-                {file?.name} · Vui lòng chờ...
-              </div>
+              <div style={{ color: "var(--color-text-muted)", fontSize: 14 }}>{file?.name} · Vui lòng chờ...</div>
             </div>
-
-            {/* Step progress dots */}
-            <div className="progress-steps">
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               {(["validating", "extracting", "sending"] as const).map((s, i) => {
-                const steps = ["validating", "extracting", "sending"];
-                const current = steps.indexOf(stage.step);
+                const current = ["validating", "extracting", "sending"].indexOf(stage.step);
                 return (
                   <div key={s} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div className={`step-dot ${i < current ? "done" : i === current ? "active" : ""}`} />
+                    <div style={{
+                      width: 12, height: 12, borderRadius: "50%",
+                      background: i < current ? "#10b981" : i === current ? "var(--color-primary)" : "#e2e8f0",
+                      boxShadow: i === current ? "0 0 0 4px #dbeafe" : undefined,
+                      transition: "all 0.3s",
+                    }} />
                     <span style={{ fontSize: 13, fontWeight: 500, color: i <= current ? "var(--color-text)" : "var(--color-text-muted)" }}>
                       {["Kiểm tra", "Trích xuất", "Xử lý"][i]}
                     </span>
@@ -353,10 +286,10 @@ export default function BienPhapLuanPage() {
           </div>
         )}
 
-        {/* ─── DONE STAGE ─── */}
+        {/* DONE */}
         {stage.step === "done" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {/* Result header */}
+          <div ref={resultRef} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Success banner */}
             <div style={{
               background: "#ecfdf5", border: "1px solid #a7f3d0",
               borderRadius: 12, padding: "16px 20px",
@@ -365,48 +298,76 @@ export default function BienPhapLuanPage() {
               <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                 <span style={{ width: 28, height: 28, color: "#059669" }}>{Icons.check}</span>
                 <div>
-                  <div style={{ fontWeight: 600, color: "#065f46" }}>Hệ thống đã hoàn tất phân tích</div>
+                  <div style={{ fontWeight: 600, color: "#065f46" }}>
+                    Tìm thấy {stage.requirements.length} vị trí nhân sự
+                  </div>
                   <div style={{ color: "#047857", fontSize: 13, marginTop: 2 }}>
                     {stage.pageCount} trang · {stage.chars.toLocaleString()} ký tự trích xuất
                   </div>
                 </div>
               </div>
               <div style={{ display: "flex", gap: 10 }}>
-                <button className="btn btn-ghost" onClick={copyToClipboard} style={{ background: "white" }}>
+                <button className="btn btn-ghost" onClick={() => copyJson(stage.requirements)} style={{ background: "white" }}>
                   <span style={{ width: 16, height: 16 }}>{copied ? Icons.check : Icons.copy}</span>
-                  {copied ? "Đã sao chép" : "Copy Markdown"}
+                  {copied ? "Đã sao chép" : "Copy JSON"}
                 </button>
-                <button className="btn btn-primary" onClick={downloadMarkdown}>
-                  <span style={{ width: 16, height: 16 }}>{Icons.download}</span> Tải về .md
+                <button className="btn btn-primary" onClick={() => downloadJson(stage.requirements)}>
+                  <span style={{ width: 16, height: 16 }}>{Icons.download}</span> Tải về .json
                 </button>
               </div>
             </div>
 
-            {/* Markdown result */}
-            <div ref={resultRef} className="card">
+            {/* Requirements list */}
+            <div className="card">
               <div className="card-header">
-                <span className="card-title">Kết quả Biện pháp luận</span>
+                <span className="card-title">Danh sách yêu cầu nhân sự</span>
                 <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{file?.name}</span>
               </div>
-              <div className="card-body">
-                <div
-                  className="result-box"
-                  dangerouslySetInnerHTML={{ __html: parseMarkdown(markdown) }}
-                />
+              <div style={{ padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
+                {stage.requirements.length === 0 ? (
+                  <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-muted)" }}>
+                    Không trích xuất được yêu cầu nhân sự nào
+                  </div>
+                ) : stage.requirements.map((req, i) => (
+                  <div key={i} className="req-card">
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{
+                        width: 28, height: 28, borderRadius: 6,
+                        background: "var(--color-primary)", color: "white",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 12, fontWeight: 700, flexShrink: 0,
+                      }}>{i + 1}</div>
+                      <span style={{ fontWeight: 600, fontSize: 15, color: "var(--color-text)" }}>{req.query}</span>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, paddingLeft: 40 }}>
+                      {req.min_years_experience != null && (
+                        <span style={{ fontSize: 12, background: "#eff6ff", color: "#2563eb", padding: "3px 10px", borderRadius: 6, fontWeight: 500 }}>
+                          Tối thiểu {req.min_years_experience} năm KN
+                        </span>
+                      )}
+                      {req.must_have_certificates.map(cert => (
+                        <span key={cert} style={{ fontSize: 12, background: "#ecfdf5", color: "#059669", padding: "3px 10px", borderRadius: 6, fontWeight: 500 }}>
+                          {cert}
+                        </span>
+                      ))}
+                      {req.min_years_experience == null && req.must_have_certificates.length === 0 && (
+                        <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Không có yêu cầu cụ thể</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* Raw markdown toggle */}
+            {/* Raw JSON toggle */}
             <details style={{ cursor: "pointer", background: "white", padding: 16, borderRadius: 12, border: "1px solid var(--color-border)" }}>
-              <summary style={{ color: "var(--color-text)", fontSize: 14, fontWeight: 500 }}>
-                Xem Markdown thô
-              </summary>
+              <summary style={{ color: "var(--color-text)", fontSize: 14, fontWeight: 500 }}>Xem JSON thô</summary>
               <pre style={{
                 marginTop: 16, background: "#f8fafc", border: "1px solid #e2e8f0",
                 borderRadius: 8, padding: 20, fontSize: 13, color: "var(--color-text)",
                 overflowX: "auto", whiteSpace: "pre-wrap", lineHeight: 1.6
               }}>
-                {markdown}
+                {JSON.stringify(stage.requirements, null, 2)}
               </pre>
             </details>
           </div>

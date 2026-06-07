@@ -1,14 +1,35 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { validatePdfIsReadable, extractPdfText } from "@/lib/pdf-validator";
+import {
+  Document, Packer, Paragraph, Table, TableRow, TableCell,
+  TextRun, WidthType, AlignmentType, BorderStyle, HeadingLevel,
+} from "docx";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type Requirement = {
   query: string;
+  count: number;
   min_years_experience: number | null;
   must_have_certificates: string[];
+};
+
+type SearchResult = {
+  score: number;
+  employee_id: string;
+  name: string;
+  position: string | null;
+  department: string | null;
+  years_of_experience: number | null;
+  valid_certificates: string[];
+};
+
+type ReqState = {
+  loading: boolean;
+  results: SearchResult[];
+  error: string | null;
 };
 
 type Stage =
@@ -32,13 +53,55 @@ const Icons = {
   users: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
 };
 
+const AVATAR_COLORS = ["#2563eb", "#0891b2", "#059669", "#d97706", "#dc2626"];
+const getColor = (name: string) => AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
+const getInitials = (name: string) => name.split(" ").slice(-2).map(w => w[0]).join("").toUpperCase();
+const scoreColor = (s: number) => s >= 0.8 ? "#059669" : s >= 0.6 ? "#d97706" : "#6b7280";
+
 export default function BienPhapLuanPage() {
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [stage, setStage] = useState<Stage>({ step: "idle" });
+  const [reqStates, setReqStates] = useState<ReqState[]>([]);
   const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+
+  // Auto-search each requirement when done
+  useEffect(() => {
+    if (stage.step !== "done" || stage.requirements.length === 0) return;
+    const reqs = stage.requirements;
+    setReqStates(reqs.map(() => ({ loading: true, results: [], error: null })));
+
+    reqs.forEach(async (req, i) => {
+      try {
+        const body: Record<string, any> = {
+          query: req.query,
+          top_k: req.count > 0 ? req.count : 5,
+        };
+        if (req.min_years_experience != null) body.min_years_experience = req.min_years_experience;
+        if (req.must_have_certificates.length > 0) body.must_have_certificates = req.must_have_certificates;
+
+        const res = await fetch(`${BASE_URL}/api/search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        setReqStates(prev => {
+          const next = [...prev];
+          next[i] = { loading: false, results: data.results ?? [], error: null };
+          return next;
+        });
+      } catch (err) {
+        setReqStates(prev => {
+          const next = [...prev];
+          next[i] = { loading: false, results: [], error: err instanceof Error ? err.message : "Lỗi tìm kiếm" };
+          return next;
+        });
+      }
+    });
+  }, [stage]);
 
   const handleFile = useCallback(async (f: File) => {
     if (f.type !== "application/pdf") {
@@ -46,6 +109,7 @@ export default function BienPhapLuanPage() {
       return;
     }
     setFile(f);
+    setReqStates([]);
     setStage({ step: "validating" });
 
     try {
@@ -67,20 +131,19 @@ export default function BienPhapLuanPage() {
 
       if (!res.ok) throw new Error(`Lỗi API: ${res.status}`);
       const data = await res.json();
-
       const raw = data.result ?? data.markdown ?? data.content ?? data;
       const requirements: Requirement[] = Array.isArray(raw) ? raw : [];
 
       setStage({ step: "done", requirements, pageCount: validation.pageCount, chars: text.length });
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Có lỗi xảy ra. Vui lòng thử lại.";
-      setStage({ step: "error", message: msg });
+      setStage({ step: "error", message: err instanceof Error ? err.message : "Có lỗi xảy ra. Vui lòng thử lại." });
     }
   }, []);
 
   const reset = () => {
     setFile(null);
+    setReqStates([]);
     setStage({ step: "idle" });
     if (inputRef.current) inputRef.current.value = "";
   };
@@ -91,12 +154,76 @@ export default function BienPhapLuanPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const downloadJson = (requirements: Requirement[]) => {
-    const blob = new Blob([JSON.stringify(requirements, null, 2)], { type: "application/json" });
+  const downloadWord = async (requirements: Requirement[], states: ReqState[]) => {
+    const borderStyle = { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" };
+    const cellBorders = { top: borderStyle, bottom: borderStyle, left: borderStyle, right: borderStyle };
+
+    const headerCell = (text: string) => new TableCell({
+      borders: cellBorders,
+      shading: { fill: "1E40AF" },
+      children: [new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text, bold: true, color: "FFFFFF", size: 22 })],
+      })],
+    });
+
+    const dataCell = (text: string, center = false) => new TableCell({
+      borders: cellBorders,
+      children: [new Paragraph({
+        alignment: center ? AlignmentType.CENTER : AlignmentType.LEFT,
+        children: [new TextRun({ text, size: 22 })],
+      })],
+    });
+
+    const rows: TableRow[] = [
+      new TableRow({
+        tableHeader: true,
+        children: [
+          headerCell("STT"),
+          headerCell("Họ và tên"),
+          headerCell("Trình độ chuyên môn"),
+          headerCell("Công việc đảm nhận"),
+        ],
+      }),
+    ];
+
+    let stt = 1;
+    requirements.forEach((req, i) => {
+      const results = states[i]?.results ?? [];
+      results.forEach(emp => {
+        rows.push(new TableRow({
+          children: [
+            dataCell(String(stt++), true),
+            dataCell(emp.name ?? ""),
+            dataCell(emp.valid_certificates?.join(", ") || emp.position || ""),
+            dataCell(req.query),
+          ],
+        }));
+      });
+    });
+
+    const doc = new Document({
+      sections: [{
+        children: [
+          new Paragraph({
+            heading: HeadingLevel.HEADING_1,
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: "DANH SÁCH NHÂN SỰ ĐỀ XUẤT", bold: true, size: 28 })],
+          }),
+          new Paragraph({ children: [new TextRun({ text: "" })] }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows,
+          }),
+        ],
+      }],
+    });
+
+    const blob = await Packer.toBlob(doc);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = (file?.name.replace(".pdf", "") ?? "ket_qua") + "_yeu_cau_nhan_su.json";
+    a.download = (file?.name.replace(".pdf", "") ?? "ket_qua") + "_nhan_su_de_xuat.docx";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -130,18 +257,31 @@ export default function BienPhapLuanPage() {
           border: 3px solid #e2e8f0; border-top-color: var(--color-primary);
           animation: spin 0.8s linear infinite;
         }
+        .spinner-sm {
+          width: 16px; height: 16px; border-radius: 50%;
+          border: 2px solid #e2e8f0; border-top-color: var(--color-primary);
+          animation: spin 0.8s linear infinite; display: inline-block;
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
         .chip {
           display: inline-flex; align-items: center; gap: 6px;
           padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 500;
           background: white; color: var(--color-text-muted); border: 1px solid var(--color-border);
         }
-        .chip svg { width: 14px; height: 14px; }
         .req-card {
-          border: 1px solid var(--color-border); border-radius: 10px;
-          padding: 16px 20px; background: var(--color-bg-card);
-          display: flex; flex-direction: column; gap: 10px;
+          border: 1px solid var(--color-border); border-radius: 12px;
+          background: var(--color-bg-card); overflow: hidden;
         }
+        .req-header {
+          display: flex; align-items: center; gap: 12px;
+          padding: 16px 20px; border-bottom: 1px solid var(--color-border);
+          background: #f8fafc;
+        }
+        .emp-row {
+          display: flex; align-items: center; gap: 12px;
+          padding: 10px 20px; border-bottom: 1px solid var(--color-border);
+        }
+        .emp-row:last-child { border-bottom: none; }
       `}</style>
 
       <div className="topbar">
@@ -150,7 +290,7 @@ export default function BienPhapLuanPage() {
             <span style={{ width: 24, height: 24, color: "var(--color-primary)" }}>{Icons.robot}</span>
             Biện pháp luận — Phân tích Hồ sơ
           </div>
-          <div className="topbar-subtitle">Upload PDF hồ sơ mời thầu để trích xuất yêu cầu nhân sự</div>
+          <div className="topbar-subtitle">Upload PDF hồ sơ mời thầu để trích xuất và ghép nhân sự tự động</div>
         </div>
         {(stage.step === "done" || file) && (
           <button className="btn btn-ghost" onClick={reset}>
@@ -175,13 +315,13 @@ export default function BienPhapLuanPage() {
                   Trích xuất yêu cầu nhân sự từ Hồ sơ mời thầu
                 </h2>
                 <p style={{ color: "var(--color-text-muted)", lineHeight: 1.6, fontSize: 14 }}>
-                  Upload file PDF hồ sơ mời thầu. Hệ thống AI sẽ tự động phân tích và trích xuất danh sách
-                  nhân sự yêu cầu kèm kinh nghiệm và chứng chỉ bắt buộc.
+                  Upload file PDF hồ sơ mời thầu. AI sẽ trích xuất danh sách vị trí cần thiết, số lượng người,
+                  kinh nghiệm và chứng chỉ — sau đó tự động tìm nhân sự phù hợp trong hệ thống.
                 </p>
                 <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                   <span className="chip"><span style={{ width: 14, height: 14 }}>{Icons.document}</span> PDF dạng văn bản</span>
                   <span className="chip"><span style={{ width: 14, height: 14 }}>{Icons.robot}</span> Phân tích tự động</span>
-                  <span className="chip"><span style={{ width: 14, height: 14 }}>{Icons.users}</span> Danh sách nhân sự</span>
+                  <span className="chip"><span style={{ width: 14, height: 14 }}>{Icons.users}</span> Ghép nhân sự AI</span>
                 </div>
               </div>
             </div>
@@ -209,8 +349,8 @@ export default function BienPhapLuanPage() {
               {[
                 { icon: Icons.upload, step: "1", title: "Upload PDF", desc: "Chọn file hồ sơ mời thầu dạng text" },
                 { icon: Icons.cog, step: "2", title: "Trích xuất", desc: "Hệ thống đọc và tách nội dung PDF" },
-                { icon: Icons.robot, step: "3", title: "Phân tích AI", desc: "AI xác định vị trí, kinh nghiệm, chứng chỉ" },
-                { icon: Icons.users, step: "4", title: "Nhận kết quả", desc: "Danh sách yêu cầu nhân sự sẵn sàng" },
+                { icon: Icons.robot, step: "3", title: "Phân tích AI", desc: "AI xác định vị trí, số lượng, chứng chỉ" },
+                { icon: Icons.users, step: "4", title: "Ghép nhân sự", desc: "Tự động tìm ứng viên phù hợp nhất" },
               ].map(s => (
                 <div key={s.step} className="stat-card" style={{ flexDirection: "column", gap: 12, padding: 20, alignItems: "flex-start" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
@@ -289,17 +429,17 @@ export default function BienPhapLuanPage() {
         {/* DONE */}
         {stage.step === "done" && (
           <div ref={resultRef} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {/* Success banner */}
+            {/* Banner */}
             <div style={{
-              background: "#ecfdf5", border: "1px solid #a7f3d0",
-              borderRadius: 12, padding: "16px 20px",
+              background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 12, padding: "16px 20px",
               display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                 <span style={{ width: 28, height: 28, color: "#059669" }}>{Icons.check}</span>
                 <div>
                   <div style={{ fontWeight: 600, color: "#065f46" }}>
-                    Tìm thấy {stage.requirements.length} vị trí nhân sự
+                    Tìm thấy {stage.requirements.length} vị trí ·{" "}
+                    {stage.requirements.reduce((s, r) => s + (r.count || 1), 0)} người cần
                   </div>
                   <div style={{ color: "#047857", fontSize: 13, marginTop: 2 }}>
                     {stage.pageCount} trang · {stage.chars.toLocaleString()} ký tự trích xuất
@@ -311,55 +451,117 @@ export default function BienPhapLuanPage() {
                   <span style={{ width: 16, height: 16 }}>{copied ? Icons.check : Icons.copy}</span>
                   {copied ? "Đã sao chép" : "Copy JSON"}
                 </button>
-                <button className="btn btn-primary" onClick={() => downloadJson(stage.requirements)}>
-                  <span style={{ width: 16, height: 16 }}>{Icons.download}</span> Tải về .json
-                </button>
+                {reqStates.length > 0 && reqStates.every(rs => !rs.loading) && (
+                  <button className="btn btn-primary" onClick={() => downloadWord(stage.requirements, reqStates)}>
+                    <span style={{ width: 16, height: 16 }}>{Icons.download}</span> Tải về Word
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Requirements list */}
-            <div className="card">
-              <div className="card-header">
-                <span className="card-title">Danh sách yêu cầu nhân sự</span>
-                <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{file?.name}</span>
-              </div>
-              <div style={{ padding: "0 20px 20px", display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
-                {stage.requirements.length === 0 ? (
-                  <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-muted)" }}>
-                    Không trích xuất được yêu cầu nhân sự nào
-                  </div>
-                ) : stage.requirements.map((req, i) => (
+            {/* Requirement cards */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {stage.requirements.map((req, i) => {
+                const rs = reqStates[i];
+                const needed = req.count > 0 ? req.count : 1;
+                const found = rs?.results.length ?? 0;
+
+                return (
                   <div key={i} className="req-card">
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    {/* Requirement header */}
+                    <div className="req-header">
                       <div style={{
-                        width: 28, height: 28, borderRadius: 6,
+                        width: 32, height: 32, borderRadius: 8,
                         background: "var(--color-primary)", color: "white",
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 12, fontWeight: 700, flexShrink: 0,
+                        fontSize: 13, fontWeight: 700, flexShrink: 0,
                       }}>{i + 1}</div>
-                      <span style={{ fontWeight: 600, fontSize: 15, color: "var(--color-text)" }}>{req.query}</span>
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, paddingLeft: 40 }}>
-                      {req.min_years_experience != null && (
-                        <span style={{ fontSize: 12, background: "#eff6ff", color: "#2563eb", padding: "3px 10px", borderRadius: 6, fontWeight: 500 }}>
-                          Tối thiểu {req.min_years_experience} năm KN
-                        </span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 15, color: "var(--color-text)" }}>{req.query}</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                          <span style={{
+                            fontSize: 12, fontWeight: 600, padding: "2px 10px", borderRadius: 6,
+                            background: "#e0e7ff", color: "#4338ca",
+                          }}>
+                            Cần {needed} người
+                          </span>
+                          {req.min_years_experience != null && (
+                            <span style={{ fontSize: 12, background: "#eff6ff", color: "#2563eb", padding: "2px 10px", borderRadius: 6 }}>
+                              ≥ {req.min_years_experience} năm KN
+                            </span>
+                          )}
+                          {req.must_have_certificates.map(cert => (
+                            <span key={cert} style={{ fontSize: 12, background: "#ecfdf5", color: "#059669", padding: "2px 10px", borderRadius: 6 }}>
+                              {cert}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      {rs && !rs.loading && (
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontSize: 20, fontWeight: 700, color: found >= needed ? "#059669" : "#d97706" }}>
+                            {found}/{needed}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>tìm được</div>
+                        </div>
                       )}
-                      {req.must_have_certificates.map(cert => (
-                        <span key={cert} style={{ fontSize: 12, background: "#ecfdf5", color: "#059669", padding: "3px 10px", borderRadius: 6, fontWeight: 500 }}>
-                          {cert}
-                        </span>
-                      ))}
-                      {req.min_years_experience == null && req.must_have_certificates.length === 0 && (
-                        <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Không có yêu cầu cụ thể</span>
-                      )}
                     </div>
+
+                    {/* Search results */}
+                    {!rs || rs.loading ? (
+                      <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, color: "var(--color-text-muted)", fontSize: 14 }}>
+                        <div className="spinner-sm" /> Đang tìm kiếm nhân sự phù hợp...
+                      </div>
+                    ) : rs.error ? (
+                      <div style={{ padding: "12px 20px", fontSize: 13, color: "#b91c1c" }}>
+                        Lỗi tìm kiếm: {rs.error}
+                      </div>
+                    ) : rs.results.length === 0 ? (
+                      <div style={{ padding: "16px 20px", fontSize: 13, color: "var(--color-text-muted)" }}>
+                        Không tìm thấy nhân sự phù hợp trong hệ thống
+                      </div>
+                    ) : (
+                      rs.results.map((emp, j) => (
+                        <div key={emp.employee_id ?? j} className="emp-row">
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", width: 20, textAlign: "center", flexShrink: 0 }}>
+                            {j + 1}
+                          </div>
+                          <div className="avatar" style={{ background: getColor(emp.name ?? "?"), flexShrink: 0, width: 32, height: 32, fontSize: 12 }}>
+                            {getInitials(emp.name ?? "?")}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 14, color: "var(--color-text)" }}>{emp.name}</div>
+                            <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                              {emp.position || "—"}
+                              {emp.department ? ` · ${emp.department}` : ""}
+                              {emp.years_of_experience != null ? ` · ${emp.years_of_experience} năm KN` : ""}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, justifyContent: "flex-end", maxWidth: 280 }}>
+                            {emp.valid_certificates?.slice(0, 2).map(c => (
+                              <span key={c} style={{ fontSize: 11, background: "#ecfdf5", color: "#059669", padding: "2px 8px", borderRadius: 6 }}>{c}</span>
+                            ))}
+                            {(emp.valid_certificates?.length ?? 0) > 2 && (
+                              <span style={{ fontSize: 11, background: "#f1f5f9", color: "#475569", padding: "2px 8px", borderRadius: 6 }}>
+                                +{emp.valid_certificates.length - 2}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{
+                            fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 6, flexShrink: 0,
+                            background: `${scoreColor(emp.score)}18`, color: scoreColor(emp.score),
+                          }}>
+                            {(emp.score * 100).toFixed(0)}%
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
-            {/* Raw JSON toggle */}
+            {/* Raw JSON */}
             <details style={{ cursor: "pointer", background: "white", padding: 16, borderRadius: 12, border: "1px solid var(--color-border)" }}>
               <summary style={{ color: "var(--color-text)", fontSize: 14, fontWeight: 500 }}>Xem JSON thô</summary>
               <pre style={{

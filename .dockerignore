@@ -6,3 +6,6 @@ README.md
 .next
 .git
 backend
+.env
+.env.local
+.env.example
